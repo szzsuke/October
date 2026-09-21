@@ -1909,59 +1909,108 @@ fun BottomSheetPlayer(
             }
 
             else -> {
-                val bottomPadding by animateDpAsState(
-                    targetValue = if (isFullScreen) 0.dp else queueSheetState.collapsedBound,
-                    label = "bottomPadding",
-                )
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier =
-                        Modifier
-                            .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal))
-                            .padding(bottom = bottomPadding)
-                            .animateContentSize(),
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        // Remember lambdas to prevent unnecessary recomposition
-                        val currentSliderPosition by rememberUpdatedState(sliderPosition)
-                        val sliderPositionProvider = remember { { currentSliderPosition } }
-                        val isExpandedProvider = remember(state) { { state.isExpanded } }
-                        AnimatedContent(
-                            targetState = showInlineLyrics,
-                            label = "Lyrics",
-                            transitionSpec = { fadeIn() togetherWith fadeOut() },
-                        ) { showLyrics ->
-                            if (showLyrics) {
-                                InlineLyricsView(
-                                    mediaMetadata = mediaMetadata,
-                                    showLyrics = showLyrics,
-                                    positionProvider = { effectivePosition },
-                                )
-                            } else {
-                                Thumbnail(
-                                    sliderPositionProvider = sliderPositionProvider,
-                                    modifier = Modifier.nestedScroll(state.preUpPostDownNestedScrollConnection),
-                                    isPlayerExpanded = isExpandedProvider,
-                                    isListenTogetherGuest = isListenTogetherGuest,
-                                )
+                val isEpisode = currentSong?.song?.isEpisode == true
+                val isFavorite = if (isEpisode) currentSong?.song?.inLibrary != null else currentSong?.song?.liked == true
+                val currentLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    ConceptPlayer(
+                        mediaMetadata = mediaMetadata,
+                        isPlaying = effectiveIsPlaying,
+                        position = effectivePosition,
+                        duration = duration,
+                        repeatMode = repeatMode,
+                        isFavorite = isFavorite,
+                        rawLyrics = currentLyrics?.lyrics,
+                        onPlayPause = {
+                            if (!isListenTogetherGuest) {
+                                playerConnection.player.togglePlayPause()
                             }
+                        },
+                        onSeek = { seekPos ->
+                            if (!isListenTogetherGuest) {
+                                if (isCasting) {
+                                    castHandler?.seekTo(seekPos)
+                                    lastManualSeekTime = System.currentTimeMillis()
+                                } else {
+                                    playerConnection.player.seekTo(seekPos)
+                                }
+                                position = seekPos
+                            }
+                        },
+                        onSeekToPrevious = {
+                            if (!isListenTogetherGuest) {
+                                playerConnection.seekToPrevious()
+                            }
+                        },
+                        onSeekToNext = {
+                            if (!isListenTogetherGuest) {
+                                playerConnection.seekToNext()
+                            }
+                        },
+                        onToggleRepeatMode = {
+                            if (!isListenTogetherGuest) {
+                                playerConnection.player.toggleRepeatMode()
+                            }
+                        },
+                        onToggleLike = {
+                            playerConnection.toggleLike()
+                        },
+                        onOpenMenu = {
+                            mediaMetadata?.let { meta ->
+                                menuState.show {
+                                    PlayerMenu(
+                                        mediaMetadata = meta,
+                                        playerBottomSheetState = state,
+                                        onShowDetailsDialog = {
+                                            meta.id.let { songId ->
+                                                bottomSheetPageState.show {
+                                                    ShowMediaInfo(songId)
+                                                }
+                                            }
+                                        },
+                                        onDismiss = menuState::dismiss,
+                                    )
+                                }
+                            }
+                        },
+                        onOpenLyrics = {
+                            showInlineLyrics = true
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .nestedScroll(state.preUpPostDownNestedScrollConnection),
+                    )
+
+                    // Lyrics Page Overlay (Opens when tapping lyrics box, dismisses on tap)
+                    AnimatedVisibility(
+                        visible = showInlineLyrics,
+                        enter = fadeIn() + slideInVertically(initialOffsetY = { it / 2 }),
+                        exit = fadeOut() + slideOutVertically(targetOffsetY = { it / 2 }),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xF0161616))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = { showInlineLyrics = false },
+                                ),
+                        ) {
+                            InlineLyricsView(
+                                mediaMetadata = mediaMetadata,
+                                showLyrics = true,
+                                positionProvider = { effectivePosition },
+                            )
                         }
                     }
-
-                    mediaMetadata?.let {
-                        controlsContent(it)
-                    }
-
-                    Spacer(Modifier.height(30.dp))
                 }
             }
         }
 
         AnimatedVisibility(
-            visible = !isFullScreen,
+            visible = !isFullScreen && queueSheetState.isExpanded,
             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
             exit = shrinkVertically(shrinkTowards = Alignment.Top) + slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         ) {
